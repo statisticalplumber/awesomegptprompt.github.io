@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, shrink-to-fit=no"
+    />
+    <title>stlite app</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@stlite/mountable@0.39.0/build/stlite.css"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@stlite/mountable@0.39.0/build/stlite.js"></script>
+    <script>
+      stlite.mount(
+        `
+import streamlit as st
+import pyodide.http
+import asyncio
+import json 
+import time
+import re 
+import pandas as pd 
+import io
+
+st.set_page_config(layout='wide')
+
+st.title(':rainbow[Awesome GPTs Playground]')
+st.markdown('''
+:green[*To ensure an optimal experience with ChatGPT, please use the curated prompts provided. After selecting a new prompt, 
+remember to click the 'Reset' button on the left to restart the conversation with your chosen prompt.
+This process helps maintain a seamless and effective interaction*].\n\n **Prompt Credits**: [awesome-chatgpt-prompts](https://github.com/f/awesome-chatgpt-prompts)
+''')
+st.markdown('--------')
+
+key = st.sidebar.text_input('Enter OpenAI Key', type = 'password')
+
+prompt_req = await pyodide.http.pyfetch('https://raw.githubusercontent.com/f/awesome-chatgpt-prompts/main/prompts.csv')
+prompt_data = await prompt_req.string()
+
+@st.cache_resource
+def get_data():
+  df = pd.read_csv(io.StringIO(prompt_data))
+  return df
+
+df = get_data()
+
+
+cols = st.columns([15, 2])
+
+def del_history():
+    st.session_state['history'] = []
+
+st.sidebar.button('Reset', on_click= del_history)
+
+
+query = None
+with st.sidebar:
+    st.markdown('**:blue[🌟🌟🌟Choose prompt from below 👇 to Chat]**')
+    count = 1
+    for b in df.itertuples():
+        if st.button(b[1], help=b[2], key=f'key_{count}', use_container_width=True):
+            query = b[2]
+        count = count + 1
+        
+pattern = r'"content":"([^"]*)"'
+
+
+async def get_llm(query, messages, cont): 
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}"  # Replace with your actual API key
+    }
+
+    data = {
+        "model": "gpt-3.5-turbo",
+        "messages": messages,
+        "temperature": 0.7
+    }
+
+    res = await pyodide.http.pyfetch(url, headers = headers, body = json.dumps(data), method='post')
+    data = await res.json()
+    result = data['choices'][0]['message']['content']
+    container = cont.empty()
+    stream_out = ''
+    for tok in result.split(' '):
+        stream_out +=tok
+        stream_out = stream_out + ' '
+        await asyncio.sleep(0.1)
+        container.markdown(stream_out)
+    return result
+
+
+if 'history' not in st.session_state:
+  st.session_state['history'] = []
+
+
+for msg in st.session_state.history:
+    cols[0].chat_message(msg['role']).write(msg['content'])
+
+if query:
+  cols[0].chat_message('user').write(query)
+  query_message = [{'role':'system', 'content': query}]
+  with cols[0].chat_message('assistant'):
+      res = await get_llm(query, query_message, cols[0])
+  st.session_state.history.extend([{'role':'user', 'content': query}, 
+                                    {'role':'assistant', 'content': res}])
+
+prompt = st.chat_input('Enter your query', disabled= not key)
+if prompt:
+  cols[0].chat_message('user').write(prompt)
+  prompt_message = {'role':'user', 'content': prompt}
+  st.session_state.history.append(prompt_message)
+  with cols[0].chat_message('assistant'):
+      res = await get_llm(prompt, st.session_state.history, cols[0])
+  st.session_state.history.append({'role': 'assistant', 'content': res})
+`,
+        document.getElementById("root")
+      );
+    </script>
+  </body>
+</html>
